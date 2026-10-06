@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any
 
 from django.core.paginator import Paginator
-from django.db.models import Avg, Count, OuterRef, Q, QuerySet, Subquery, Sum
+from django.db.models import Avg, Count, OuterRef, Prefetch, Q, QuerySet, Subquery, Sum
 from django.http import HttpRequest
 
 from core.fuzzy import (
@@ -27,10 +27,17 @@ def get_all_audited_persons() -> list[dict[str, Any]]:
     """
     Retrieves all audited persons with aggregate statistics across all their bank statements.
     """
+    latest_balance_sub = (
+        BankTransaction.objects.filter(account=OuterRef("pk"))
+        .order_by("-txn_date", "-created_at")
+        .values("closing_balance")[:1]
+    )
+    accounts_prefetch = Prefetch(
+        "bank_accounts",
+        queryset=BankAccount.objects.annotate(latest_closing=Subquery(latest_balance_sub)),
+    )
     persons = (
-        AuditedPerson.objects.prefetch_related("bank_accounts__transactions")
-        .all()
-        .order_by("-created_at")
+        AuditedPerson.objects.prefetch_related(accounts_prefetch).all().order_by("-created_at")
     )
     results = []
     for p in persons:
@@ -41,6 +48,10 @@ def get_all_audited_persons() -> list[dict[str, Any]]:
         cash_deposits = sum(a.cash_deposit_count for a in accounts)
         hyundai_count = sum(a.hyundai_count for a in accounts)
         high_risk_count = sum(a.high_risk_count for a in accounts)
+        closing_balance = sum(
+            (a.latest_closing for a in accounts if a.latest_closing is not None),
+            Decimal("0.00"),
+        )
 
         results.append(
             {
@@ -60,6 +71,8 @@ def get_all_audited_persons() -> list[dict[str, Any]]:
                 "cash_deposit_count": cash_deposits,
                 "hyundai_count": hyundai_count,
                 "high_risk_count": high_risk_count,
+                "closing_balance": float(closing_balance),
+                "closing_balance_formatted": format_inr(closing_balance),
                 "created_at": p.created_at,
             }
         )

@@ -24,6 +24,7 @@ from .backend.statement_parser import (
 from .models import AuditedPerson, BankAccount, BankTransaction, WatchlistRule
 from .selectors import (
     fuzzy_search_transactions,
+    get_all_audited_persons,
     get_all_statement_transactions,
     get_bank_dashboard_metrics,
     get_frequent_counterparties,
@@ -645,3 +646,18 @@ class QBankServicesAndSelectorsTests(TestCase):
         self.assertGreaterEqual(fuzzy_data["total_matches"], 1)
         self.assertIn("matched_keyword", fuzzy_data["matches"][0])
         self.assertTrue(fuzzy_data["matches"][0]["matched_keyword"])
+
+    def test_get_all_audited_persons_closing_balance(self):
+        persons = get_all_audited_persons()
+        self.assertGreaterEqual(len(persons), 1)
+        target = next(p for p in persons if p["id"] == str(self.account.person.id))
+        self.assertIn("closing_balance", target)
+        self.assertIn("closing_balance_formatted", target)
+        self.assertEqual(target["closing_balance"], 1290000.0)
+        self.assertEqual(target["closing_balance_formatted"], "12,90,000.00")
+
+        # Test dashboard renders Balance instead of Cash (CDM)
+        dash_res = self.client.get(reverse("q_bank:dashboard"))
+        self.assertEqual(dash_res.status_code, 200)
+        self.assertContains(dash_res, "Balance")
+        self.assertContains(dash_res, "12,90,000.00")
